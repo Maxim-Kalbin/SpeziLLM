@@ -14,7 +14,15 @@ import MLXLMCommon
 
 extension LLMLocalSession {
     private func verifyModelDownload() -> Bool {
-        let repo = Hub.Repo(id: self.schema.configuration.name)
+        let modelId = self.schema.configuration.name // This is the hubID or custom path from LLMLocalModel
+
+        // Check if the modelId is a path to a local GGUF file
+        if modelId.hasSuffix(".gguf") {
+            return FileManager.default.fileExists(atPath: modelId)
+        }
+
+        // Original logic for Hugging Face repositories and .safetensors files
+        let repo = Hub.Repo(id: modelId)
         let url = HubApi.shared.localRepoLocation(repo)
         let modelFileExtension = ".safetensors"
         
@@ -22,6 +30,7 @@ extension LLMLocalSession {
             let contents = try FileManager.default.contentsOfDirectory(atPath: url.path())
             return contents.contains { $0.hasSuffix(modelFileExtension) }
         } catch {
+            // If directory doesn't exist or other error, model is not considered downloaded this way.
             return false
         }
     }
@@ -38,10 +47,17 @@ extension LLMLocalSession {
         }
         
         guard verifyModelDownload() else {
+            let errorDetail = "Local LLM file for configuration '\(self.schema.configuration.name)' could not be verified. It might not exist or is not a recognized .gguf file or HuggingFace downloaded model."
+            Self.logger.error("SpeziLLMLocal: \(errorDetail)")
             if let continuation {
                 await finishGenerationWithError(LLMLocalError.modelNotFound, on: continuation)
             }
-            Self.logger.error("SpeziLLMLocal: Local LLM file could not be opened, indicating that the model file doesn't exist")
+            // Set state to error if setup fails before generation
+            if await self.state == .loading { // only set error if we are still in loading (i.e. setup() was called directly)
+                 await MainActor.run {
+                    self.state = .error(error: LLMLocalError.modelNotFound)
+                 }
+            }
             return false
         }
         
@@ -58,8 +74,19 @@ extension LLMLocalSession {
                 self.state = .ready
             }
         } catch {
-            continuation?.yield(with: .failure(error))
-            Self.logger.error("SpeziLLMLocal: Failed to load local `modelContainer`")
+            Self.logger.error("SpeziLLMLocal: Failed to load local `modelContainer` for \(self.schema.configuration.name): \(error.localizedDescription)")
+            if let continuation {
+                 // Pass the more specific error if available
+                let llmError = LLMLocalError.generationError // Or a more specific error if identifiable
+                continuation.yield(with: .failure(llmError))
+                await finishGenerationWithError(llmError, on: continuation)
+            }
+            // Set state to error if setup fails before generation
+            if await self.state == .loading { // only set error if we are still in loading (i.e. setup() was called directly)
+                await MainActor.run {
+                    self.state = .error(error: LLMLocalError.generationError) // Or a more specific error
+                }
+            }
             return false
         }
         
