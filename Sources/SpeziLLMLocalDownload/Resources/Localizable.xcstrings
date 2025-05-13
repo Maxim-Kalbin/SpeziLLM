@@ -41,6 +41,16 @@
         }
       }
     },
+    "LLM_GGUF_NOT_FOUND_ERROR" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The specified local GGUF model file was not found at the provided path."
+          }
+        }
+      }
+    },
     "LLM_DOWNLOAD_NEXT_BUTTON" : {
       "localizations" : {
         "en" : {
